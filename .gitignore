@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environment
+backend/venv/
+
+# Environment variables
+.env
+.env.*
+
+# Local AI/vector data
+backend/vectors.json
+backend/chroma_db/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
