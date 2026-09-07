@@ -1,3 +1,7 @@
+## 🚀 Live Demo
+
+👉 [Open HelpDesk AI](https://cheerful-lollipop-1e7867.netlify.app/)
+
 # HelpDesk AI
 
 AI-powered IT Helpdesk Agent that analyzes technical problems, runs diagnostic checks, retrieves relevant troubleshooting knowledge, generates evidence-aware responses, and creates support tickets when escalation is required.
