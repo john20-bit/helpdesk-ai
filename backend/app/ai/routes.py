@@ -1,10 +1,13 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.ai.assistant import generate_helpdesk_response
+from app.agent.agent import run_agent
 
 
-router = APIRouter(prefix="/api/ai", tags=["AI Helpdesk"])
+router = APIRouter(
+    prefix="/api/ai",
+    tags=["AI Helpdesk"],
+)
 
 
 class ChatRequest(BaseModel):
@@ -19,9 +22,17 @@ def chat(request: ChatRequest):
             "message": "Please describe your IT problem.",
         }
 
-    result = generate_helpdesk_response(request.message)
+    try:
+        result = run_agent(request.message)
 
-    return {
-        "success": True,
-        "data": result,
-    }
+        return {
+            "success": True,
+            "data": result,
+        }
+
+    except Exception as error:
+        return {
+            "success": False,
+            "message": "Unable to process the helpdesk request.",
+            "error": str(error),
+        }

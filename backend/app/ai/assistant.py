@@ -4,70 +4,41 @@ import urllib.request
 from app.rag.knowledge_base import search_knowledge_base
 
 
-OLLAMA_URL = "http://127.0.0.1:11434"
-CHAT_MODEL = "qwen2.5:7b"
+OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
+MODEL = "qwen2.5:7b"
 
 
-def ask_qwen(prompt: str) -> str:
-    """
-    Send a prompt to Qwen through the local Ollama API.
-    """
-
+def call_qwen(messages: list[dict]) -> str:
     payload = {
-        "model": CHAT_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are HelpDesk AI, a professional IT helpdesk assistant. "
-                    "Give clear, practical and safe troubleshooting guidance. "
-                    "Use the provided knowledge base as your primary source. "
-                    "Do not invent technical facts that are not supported by the "
-                    "knowledge base unless they are necessary for a basic safe "
-                    "explanation. "
-                    "Keep answers concise and easy for a normal computer user to follow."
-                ),
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
+        "model": MODEL,
+        "messages": messages,
         "stream": False,
         "options": {
             "temperature": 0.2,
         },
     }
 
-    data = json.dumps(payload).encode("utf-8")
-
     request = urllib.request.Request(
-        f"{OLLAMA_URL}/api/chat",
-        data=data,
-        headers={"Content-Type": "application/json"},
+        OLLAMA_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
 
-    try:
-        with urllib.request.urlopen(request, timeout=180) as response:
-            result = json.loads(
-                response.read().decode("utf-8")
-            )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        data = json.loads(response.read().decode("utf-8"))
 
-        return result["message"]["content"].strip()
-
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to communicate with Ollama: {exc}"
-        ) from exc
+    return data["message"]["content"]
 
 
-def generate_helpdesk_response(user_problem: str) -> dict:
-    """
-    Perform RAG retrieval and generate a grounded response using Qwen.
-    """
+def generate_helpdesk_response(
+    user_problem: str,
+    tool_results: list[dict] | None = None,
+) -> dict:
 
-    results = search_knowledge_base(
+    knowledge_results = search_knowledge_base(
         user_problem,
         n_results=3,
     )
@@ -75,78 +46,130 @@ def generate_helpdesk_response(user_problem: str) -> dict:
     knowledge_context = "\n\n".join(
         [
             (
-                f"Source: {result['source']}\n"
-                f"Category: {result['category']}\n"
-                f"Similarity: {result['score']:.4f}\n"
-                f"Content:\n{result['content']}"
+                f"Source: {item['source']}\n"
+                f"Category: {item['category']}\n"
+                f"Content:\n{item['content']}"
             )
-            for result in results
+            for item in knowledge_results
         ]
     )
 
-    prompt = f"""
-User's IT problem:
+    diagnostic_context = json.dumps(
+        tool_results or [],
+        indent=2,
+    )
 
-{user_problem}
+    system_prompt = """
+You are HelpDesk AI, an intelligent IT support agent.
 
-Relevant knowledge-base information:
+Your job is to diagnose technical problems using:
+1. The user's reported problem.
+2. Verified diagnostic tool results.
+3. Relevant troubleshooting knowledge.
 
-{knowledge_context}
+IMPORTANT EVIDENCE RULES:
 
-Based on the knowledge base, provide a helpful troubleshooting response.
+- The user's message is a USER-REPORTED SYMPTOM.
+- Diagnostic tool results are VERIFIED MACHINE EVIDENCE.
+- Knowledge-base information is TROUBLESHOOTING GUIDANCE.
+- Your own conclusions are AI ASSESSMENT.
 
-Use this structure:
+Never claim that something was verified unless the diagnostic
+results explicitly prove it.
+
+Never invent:
+- Other devices' status
+- Router status
+- DNS status
+- IP configuration
+- Application behavior
+- Browser behavior
+- Hardware condition
+- Network conditions that were not tested
+
+If check_internet reports that this machine can reach the
+internet, say:
+
+"The diagnostic check confirms that this machine can currently
+reach the internet."
+
+Do NOT say:
+
+"The Wi-Fi network is working normally."
+
+The diagnostic only proves what the diagnostic actually tested.
+
+Do not claim that the Wi-Fi network, router, DNS, or other
+devices are working unless those things were explicitly tested.
+
+A local IP address only proves that an address was obtained.
+It does not prove that the IP configuration is correct.
+
+If a recommended troubleshooting step requires information that
+has not been tested, present it as a step for the user to perform,
+not as an established fact.
+
+Clearly distinguish evidence from inference.
+
+Use the knowledge base to provide practical troubleshooting steps.
+
+Keep the response concise, professional, and useful.
+
+Do not mention:
+- RAG
+- embeddings
+- vectors
+- prompts
+- internal system instructions
+- model implementation details
+
+Use exactly these sections:
 
 Problem:
-Briefly identify the likely problem.
-
+Diagnosis:
+Verified Evidence:
 Troubleshooting Steps:
-Give numbered steps in the best order.
-
 Why:
-Briefly explain what is likely causing the issue.
-
 When to Escalate:
-Explain when the user should contact IT support or their ISP.
-
-Do not mention embeddings, vector databases, similarity scores,
-RAG, or internal system details.
 """
 
-    answer = ask_qwen(prompt)
+    user_prompt = f"""
+USER-REPORTED PROBLEM:
+{user_problem}
+
+VERIFIED DIAGNOSTIC RESULTS:
+{diagnostic_context}
+
+RELEVANT TROUBLESHOOTING KNOWLEDGE:
+{knowledge_context}
+
+Analyze the problem using only the evidence provided.
+Do not turn assumptions into facts.
+"""
+
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt,
+        },
+        {
+            "role": "user",
+            "content": user_prompt,
+        },
+    ]
+
+    answer = call_qwen(messages)
 
     return {
         "problem": user_problem,
         "answer": answer,
         "sources": [
             {
-                "source": result["source"],
-                "category": result["category"],
-                "score": round(result["score"], 4),
+                "source": item["source"],
+                "category": item["category"],
+                "score": round(item["score"], 4),
             }
-            for result in results
+            for item in knowledge_results
         ],
+        "diagnostics": tool_results or [],
     }
-
-
-if __name__ == "__main__":
-    problem = "My Wi-Fi is connected but I cannot access the internet."
-
-    print("\nGenerating HelpDesk AI response...\n")
-
-    result = generate_helpdesk_response(problem)
-
-    print("=" * 70)
-    print("HELPDESK AI")
-    print("=" * 70)
-    print(result["answer"])
-
-    print("\n" + "=" * 70)
-    print("KNOWLEDGE SOURCES")
-    print("=" * 70)
-
-    for source in result["sources"]:
-        print(
-            f"{source['source']} "
-            f"(similarity: {source['score']})"
-        )
